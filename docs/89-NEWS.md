@@ -39,7 +39,8 @@ This document was last updated at commit v4.3-197-g9085ed631.
   D-Bus session bus, it is disabled by default: set the
   `statusnotifier_enabled` property of the systray widget to `true` to enable
   it. `wibox.widget.systray` then displays these items next to the XEmbed
-  icons. Their menus are shown as native GTK menus.
+  icons. Their menus are shown with `awful.menu` by default (the items
+  emit `request::menu`, so other handlers can be used).
   Awesome provides the `StatusNotifierWatcher` and `StatusNotifierHost` D-Bus
   services, so bridges such as `snixembed` are no longer needed (and should
   not be used, since they would duplicate the icons).
