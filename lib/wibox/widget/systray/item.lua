@@ -134,7 +134,8 @@ local class_signals, class_signal_functions
 --    end)
 --
 -- `awful.statusnotifier.menu.default` (the default handler) displays the
--- menu with `awful.menu`. When no handler is connected, the application is
+-- menu with `awful.menu`, and `awful.statusnotifier.gtk_menu` provides a
+-- handler using GTK menus. When no handler is connected, the application is
 -- asked to display its own menu.
 --
 -- The handler is responsible for calling `hints.menu:opened()` once the
