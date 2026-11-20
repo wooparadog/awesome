@@ -425,6 +425,35 @@ function item:_clear_icon_cache()
     self._private.icon_cache = {}
 end
 
+--- Get the item menu.
+-- @method get_menu
+-- @treturn wibox.widget.systray.dbusmenu|nil The menu, if the item has one.
+function item:get_menu()
+    local path = self.menu_path
+
+    if (not path) or path == "" or path == "/" or path == "/NO_DBUSMENU" then
+        return nil
+    end
+
+    local m = self._private.menu
+
+    if m and m.path == path then return m end
+
+    if m then m:destroy() end
+
+    local dbusmenu = require("wibox.widget.systray.dbusmenu")
+
+    m = dbusmenu(
+        self._private.connection,
+        self._private.unique_name or self.service,
+        path,
+        { icon_theme_path = self.icon_theme_path }
+    )
+    self._private.menu = m
+
+    return m
+end
+
 local function coords(x, y)
     if not (x and y) then
         local c = capi.mouse.coords()
@@ -471,13 +500,26 @@ function item:context_menu(x, y)
     call(self, "ContextMenu", coords(x, y))
 end
 
---- Show the menu (the application context menu).
+--- Show the menu (a `com.canonical.dbusmenu` menu when available, otherwise
+-- the application context menu).
 -- @method show_menu
 -- @tparam[opt=mouse.coords().x] integer x
 -- @tparam[opt=mouse.coords().y] integer y
+-- @tparam[opt=3] integer button The mouse button which triggered the menu.
 -- @noreturn
-function item:show_menu(x, y)
-    self:context_menu(x, y)
+function item:show_menu(x, y, button)
+    local m = self:get_menu()
+
+    if not m then
+        self:context_menu(x, y)
+        return
+    end
+
+    m:show {
+        coords   = (x and y) and { x = x, y = y } or nil,
+        button   = button,
+        fallback = function() self:context_menu(x, y) end,
+    }
 end
 
 --- Scroll on the item.
@@ -506,6 +548,11 @@ function item:_remove()
     if self._private.subscription then
         self._private.connection:signal_unsubscribe(self._private.subscription)
         self._private.subscription = nil
+    end
+
+    if self._private.menu then
+        self._private.menu:destroy()
+        self._private.menu = nil
     end
 
     self:emit_signal("removed")

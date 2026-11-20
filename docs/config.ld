@@ -1661,6 +1661,7 @@ file = {
         '../lib/gears/init.lua',
         '../lib/wibox/layout/init.lua',
         '../lib/wibox/container/init.lua',
+        '../lib/wibox/widget/systray/dbusmenu.lua',
         '../lib/wibox/widget/systray/icon.lua',
         '../lib/wibox/widget/systray/item.lua',
         '../lib/wibox/widget/systray/statusnotifier.lua',

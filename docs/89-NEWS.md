@@ -36,8 +36,8 @@ This document was last updated at commit v4.3-197-g9085ed631.
   automatically. This reduces the amount of boilerplate code.
 * StatusNotifierItem (the D-Bus based system tray used by Electron, Qt,
   libappindicator and KDE applications) is now supported. `wibox.widget.systray`
-  displays these items next to the XEmbed icons.
-  Awesome provides the `StatusNotifierWatcher` and
+  displays these items next to the XEmbed icons, and their menus are shown as
+  native GTK menus. Awesome provides the `StatusNotifierWatcher` and
   `StatusNotifierHost` D-Bus services, so bridges such as `snixembed` are no
   longer needed (and should not be used, since they would duplicate the
   icons). Set the `statusnotifier_enabled` property of the systray widget to
