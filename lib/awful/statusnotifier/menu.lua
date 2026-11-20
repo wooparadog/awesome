@@ -19,6 +19,8 @@
 --        awful.statusnotifier.menu.default)
 --    sni_item.connect_signal("request::menu", my_handler)
 --
+-- See `awful.statusnotifier.gtk_menu` to use GTK menus instead.
+--
 -- @author WooParadog
 -- @copyright 2026 WooParadog
 -- @module awful.statusnotifier.menu
