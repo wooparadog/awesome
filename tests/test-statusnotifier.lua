@@ -9,7 +9,8 @@ local lgi = require("lgi")
 local Gio, GLib, GObject = lgi.Gio, lgi.GLib, lgi.GObject
 local gdebug = require("gears.debug")
 local statusnotifier = require("wibox.widget.systray.statusnotifier")
-local dbusmenu = require("wibox.widget.systray.dbusmenu")
+local sni_item = require("wibox.widget.systray.item")
+local sni_menu = require("awful.statusnotifier.menu")
 
 -- Record the warnings. The expected ones are not printed, since any warning
 -- in the log fails the test (`tests/run.sh -W`). The others still are.
@@ -323,6 +324,13 @@ end)
 
 local host_registered, menu, bogus_registered_at, bogus_warned_at
 
+-- The last menu event of the given type sent to the application.
+local function last_event(name)
+    for i = #app.events, 1, -1 do
+        if app.events[i].event == name then return app.events[i] end
+    end
+end
+
 -- Is `name` owned on the session bus?
 local function has_owner(name)
     local conn = Gio.bus_get_sync(Gio.BusType.SESSION)
@@ -507,76 +515,70 @@ local steps = {
         return true
     end,
 
-    -- The menu is fetched and displayed when right clicking.
+    -- The menu is fetched and displayed with `awful.menu` (the default
+    -- `request::menu` handler) when right clicking.
     function(count)
-        if count == 1 then
-            item:get_menu():connect_signal("shown", function(_, m) menu = m end)
-            click(3)
-        end
+        if count == 1 then click(3) end
 
-        if not dbusmenu.is_supported() then
-            -- Without GTK, the application is asked to show its menu.
-            local last = app.calls[#app.calls]
-            if last.method ~= "ContextMenu" then return end
-            return true
-        end
+        menu = sni_menu.get_visible()
 
         if not menu then return end
 
         assert(app.about_to_show[1] == 0)
-        assert(menu:get_visible())
+        assert(menu.wibox.visible)
+        assert(app.events[1].id == 0 and app.events[1].event == "opened")
 
         -- Open, Toggle, Disabled, separator, More, Quit
-        local children = menu:get_children()
-        assert(#children == 6, #children)
-        assert(children[1]:get_label() == "_Open")
-        assert(children[1]:get_use_underline())
-        assert(children[2]:get_active() == true) -- checkmark
-        assert(not children[3]:get_sensitive()) -- disabled
-        assert(children[4]:get_label() == nil or children[4]:get_label() == "")
-        assert(children[5]:get_submenu()) -- submenu
-        assert(children[6]:get_label() == "_Quit")
+        assert(#menu.items == 6, #menu.items)
+        assert(menu.items[1].akey == "o")
+        assert(menu.items[1].label.text == "Open")
+        assert(menu.items[2].icon.text == "☑") -- checkmark
+        assert(menu.items[3].cmd == nil) -- disabled
+        assert(menu.items[4].label == nil) -- separator
+        assert(type(menu.items[5].cmd) == "table") -- submenu
+        assert(#menu.items[5].cmd == 1)
+        assert(menu.items[6].akey == "q")
 
         return true
     end,
 
-    -- The menu stays open after the button release and supports the
-    -- keyboard. Select "Open".
+    -- The menu supports the keyboard. Select "Open".
     function(count)
-        if not dbusmenu.is_supported() then return true end
-
         if count == 1 then
             key("Down")
             key("Return")
         end
 
-        local clicked
+        if not last_event("clicked") then return end
 
-        for _, e in ipairs(app.events) do
-            if e.event == "clicked" then clicked = e end
-        end
-
-        if not clicked then return end
-
-        assert(clicked.id == 2, tostring(clicked.id))
-        assert(app.events[1].id == 0 and app.events[1].event == "opened")
+        assert(last_event("clicked").id == 2, tostring(last_event("clicked").id))
 
         return true
     end,
 
-    -- The menu is closed and destroyed.
+    -- The menu is closed.
     function()
-        if not dbusmenu.is_supported() then return true end
+        if sni_menu.get_visible() or menu.wibox.visible then return end
+        if not last_event("closed") then return end
 
-        if item:get_menu():is_visible() then return end
+        return true
+    end,
 
-        local closed = false
-
-        for _, e in ipairs(app.events) do
-            if e.id == 0 and e.event == "closed" then closed = true end
+    -- Without a `request::menu` handler, the application is asked to show
+    -- its own menu.
+    function(count)
+        if count == 1 then
+            app.calls = {}
+            sni_item.disconnect_signal("request::menu", sni_menu.default)
+            click(3)
         end
 
-        if not closed then return end
+        local last = app.calls[#app.calls]
+
+        if not (last and last.method == "ContextMenu") then return end
+
+        assert(not sni_menu.get_visible())
+        sni_item.connect_signal("request::menu", sni_menu.default)
 
         return true
     end,

@@ -1,11 +1,12 @@
 ---------------------------------------------------------------------------
--- A `com.canonical.dbusmenu` client displayed as a native GTK menu.
+-- A `com.canonical.dbusmenu` client.
 --
 -- StatusNotifierItems usually export their context menu using this
--- protocol. The menu layout is fetched when the menu is shown and clicks are
--- sent back to the application. The menu is displayed with GTK (like the
--- menus of XEmbed tray icons and `snixembed`), so it uses the GTK theme and
--- supports keyboard navigation.
+-- protocol. The menu layout is fetched when the menu is requested and the
+-- events (clicks, opening and closing) are sent back to the application.
+--
+-- This module does not display anything: the item emits `request::menu` with
+-- the parsed layout, and a handler displays it (see `awful.statusnotifier`).
 --
 -- Known limitations:
 --
@@ -30,15 +31,8 @@ local Gio, GLib = lgi.Gio, lgi.GLib
 local gobject = require("gears.object")
 local gtable = require("gears.table")
 local gdebug = require("gears.debug")
-local gtimer = require("gears.timer")
 local protected_call = require("gears.protected_call")
 local icon = require("wibox.widget.systray.icon")
-
-local capi = {
-    awesome      = awesome,
-    mouse        = mouse,
-    mousegrabber = mousegrabber,
-}
 
 local dbusmenu = {}
 
@@ -191,331 +185,67 @@ function dbusmenu:fetch(callback)
     end)
 end
 
--- GTK is only loaded when a menu is shown for the first time.
-local gtk
-
-local function get_gtk()
-    if gtk == nil then
-        local ok, Gtk = pcall(lgi.require, "Gtk", "3.0")
-
-        if ok and Gtk then
-            local has_x11, GdkX11 = pcall(lgi.require, "GdkX11", "3.0")
-            gtk = {
-                Gtk       = Gtk,
-                Gdk       = lgi.require("Gdk", "3.0"),
-                GdkPixbuf = lgi.GdkPixbuf,
-                GdkX11    = has_x11 and GdkX11 or nil,
-            }
-        else
-            gdebug.print_warning("systray: GTK 3 is not available, the " ..
-                "menus of the StatusNotifierItems cannot be displayed: " ..
-                tostring(Gtk))
-            gtk = false
-        end
-    end
-
-    return gtk or nil
-end
-
---- Can the menus be displayed?
+--- Does the layout have an entry to display?
 --
--- This requires GTK 3 (and its GObject introspection data).
+-- Hidden entries and separators are not counted.
 --
--- @staticfct wibox.widget.systray.dbusmenu.is_supported
+-- @staticfct wibox.widget.systray.dbusmenu.has_entries
+-- @tparam table node The node (see `parse_layout`).
 -- @treturn boolean
-function dbusmenu.is_supported()
-    return get_gtk() ~= nil
-end
-
--- Icon theme directories added to the GTK icon theme.
-local added_theme_paths = {}
-
-local function make_image(g, props, theme_path)
-    local data = props["icon-data"]
-
-    if data and data ~= "" then
-        local ok, pixbuf = pcall(function()
-            local loader = g.GdkPixbuf.PixbufLoader()
-            loader:write(data)
-            loader:close()
-            return loader:get_pixbuf()
-        end)
-
-        if ok and pixbuf then
-            return g.Gtk.Image.new_from_pixbuf(pixbuf)
-        end
-    end
-
-    local name = props["icon-name"]
-
-    if name and name ~= "" then
-        if name:sub(1, 1) == "/" then
-            return g.Gtk.Image.new_from_file(name)
-        end
-
-        if theme_path and theme_path ~= "" and not added_theme_paths[theme_path] then
-            added_theme_paths[theme_path] = true
-            g.Gtk.IconTheme.get_default():append_search_path(theme_path)
-        end
-
-        return g.Gtk.Image.new_from_icon_name(name, g.Gtk.IconSize.MENU)
-    end
-end
-
-local build_menu
-
-local function make_item(self, g, node, theme_path)
-    local Gtk = g.Gtk
-    local props = node.props
-    local toggle = props["toggle-type"]
-    local mi
-
-    if toggle == "checkmark" or toggle == "radio" then
-        mi = Gtk.CheckMenuItem.new_with_mnemonic(props.label)
-        mi:set_draw_as_radio(toggle == "radio")
-
-        local state = props["toggle-state"]
-
-        if state == 0 or state == 1 then
-            -- Note: this emits `activate`, so it must be done before the
-            -- signal is connected.
-            mi:set_active(state == 1)
-        else
-            mi:set_inconsistent(true)
-        end
-    else
-        local img = make_image(g, props, theme_path)
-
-        if img then
-            mi = Gtk.ImageMenuItem.new_with_mnemonic(props.label)
-            mi:set_image(img)
-            mi:set_always_show_image(true)
-        else
-            mi = Gtk.MenuItem.new_with_mnemonic(props.label)
-        end
-    end
-
-    mi:set_sensitive(props.enabled and true or false)
-
-    if props["children-display"] == "submenu" then
-        mi:set_submenu(build_menu(self, g, node, theme_path))
-    else
-        local id = node.id
-
-        function mi.on_activate()
-            protected_call(self.send_event, self, id, "clicked")
-        end
-    end
-
-    return mi
-end
-
-build_menu = function(self, g, node, theme_path)
-    local menu = g.Gtk.Menu()
-    local last_is_separator, count = true, 0
-
+function dbusmenu.has_entries(node)
     for _, child in ipairs(node.children) do
-        local props = child.props
-
-        if props.visible then
-            if props.type == "separator" then
-                -- Skip leading and repeated separators.
-                if not last_is_separator then
-                    menu:append(g.Gtk.SeparatorMenuItem())
-                    last_is_separator = true
-                end
-            else
-                menu:append(make_item(self, g, child, theme_path))
-                last_is_separator = false
-                count = count + 1
-            end
+        if child.props.visible and child.props.type ~= "separator" then
+            return true
         end
     end
 
-    -- Remove the trailing separator.
-    local children = menu:get_children()
-    local last = children[#children]
-
-    if last and last_is_separator then
-        menu:remove(last)
-    end
-
-    menu:show_all()
-
-    return menu, count
+    return false
 end
 
---- Build a GTK menu from a parsed layout.
--- @method build
--- @tparam table root The root node (see `parse_layout`).
--- @treturn Gtk.Menu|nil The menu.
-function dbusmenu:build(root)
-    local g = get_gtk()
-
-    if not g then return nil end
-
-    local menu, count = build_menu(self, g, root, self._private.theme_path)
-
-    if count == 0 then
-        menu:destroy()
-        return nil
-    end
-
-    return menu
-end
-
--- Get a timestamp for the GTK grabs. GTK needs it to know if the button
--- release which follows the click must close the menu.
-local function get_time(g, menu)
-    if not g.GdkX11 then return 0 end
-
-    local ok, time = pcall(function()
-        local toplevel = menu:get_toplevel()
-        toplevel:realize()
-        return g.GdkX11.x11_get_server_time(toplevel:get_window())
-    end)
-
-    return ok and time or 0
-end
-
-local function popup(g, menu, coords, button)
-    local Gdk = g.Gdk
-
-    -- While a mouse button is pressed over a wibox, awesome's X11 connection
-    -- holds the implicit pointer grab of the button press. GTK uses its own
-    -- connection, so it cannot grab the pointer and `popup_at_rect` would not
-    -- show the menu.
-    --
-    -- `mousegrabber.stop()` is only used for its side effect: it calls
-    -- `xcb_ungrab_pointer`, which also releases the implicit grab.
-    -- `awesome.sync()` makes sure the X server processed the ungrab before GTK
-    -- tries to grab the pointer.
-    --
-    -- When a Lua mousegrabber is running, it owns the grab and must not be
-    -- stopped. Nothing is ungrabbed, so the GTK grab fails and the menu is
-    -- not shown (see `show`).
-    if not capi.mousegrabber.isrunning() then
-        capi.mousegrabber.stop()
-        capi.awesome.sync()
-    end
-
-    local root = Gdk.get_default_root_window()
-    local event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
-    event.button.window = root
-    event.button.time = get_time(g, menu)
-    event.button.button = button or 3
-    event.button.x, event.button.y = coords.x, coords.y
-    event.button.x_root, event.button.y_root = coords.x, coords.y
-
-    local display = Gdk.Display.get_default()
-    local seat = display and display:get_default_seat()
-
-    if seat then
-        event:set_device(seat:get_pointer())
-    end
-
-    menu:popup_at_rect(
-        root,
-        Gdk.Rectangle { x = coords.x, y = coords.y, width = 1, height = 1 },
-        Gdk.Gravity.NORTH_WEST,
-        Gdk.Gravity.NORTH_WEST,
-        event
-    )
-end
-
---- Is the menu visible?
--- @method is_visible
--- @treturn boolean
-function dbusmenu:is_visible()
-    local m = self._private.menu
-    return m and m:get_visible() or false
-end
-
---- Hide the menu.
--- @method hide
+--- Tell the application that an entry was activated.
+-- @method activate
+-- @tparam integer id The entry id (`node.id`).
 -- @noreturn
-function dbusmenu:hide()
-    local m = self._private.menu
-
-    if m then
-        self._private.menu = nil
-        m:popdown()
-        m:destroy()
-    end
+function dbusmenu:activate(id)
+    self:send_event(id, "clicked")
 end
 
---- Fetch the layout and show the menu.
--- @method show
--- @tparam[opt={}] table args
--- @tparam[opt=mouse.coords()] table args.coords The menu position.
--- @tparam[opt=3] integer args.button The mouse button used to show the menu.
--- @tparam[opt] function args.fallback Called when the menu cannot be shown.
+--- Tell the application that the menu is displayed.
+-- @method opened
 -- @noreturn
-function dbusmenu:show(args)
-    args = args or {}
+function dbusmenu:opened()
+    self:send_event(0, "opened")
+end
 
-    local g = get_gtk()
-
-    if not g then
-        if args.fallback then args.fallback() end
-        return
-    end
-
-    local coords = args.coords or capi.mouse.coords()
-
-    -- Ignore results from older requests.
-    self._private.request = (self._private.request or 0) + 1
-    local request = self._private.request
-
-    self:fetch(function(root)
-        if self._private.destroyed or request ~= self._private.request then return end
-
-        self:hide()
-
-        local m = root and self:build(root)
-
-        if not m then
-            if args.fallback then args.fallback() end
-            return
-        end
-
-        self._private.menu = m
-
-        function m.on_deactivate()
-            -- The item is activated after the menu is deactivated, so
-            -- destroy the menu later.
-            gtimer.delayed_call(function()
-                if self._private.menu == m then
-                    self:hide()
-                end
-                self:send_event(0, "closed")
-            end)
-        end
-
-        self:send_event(0, "opened")
-        popup(g, m, coords, args.button)
-
-        -- GTK does not show the menu (and does not emit `deactivate`) when it
-        -- cannot grab the pointer and the keyboard.
-        if not m:get_visible() then
-            gdebug.print_warning("systray: the menu could not be shown, " ..
-                "the pointer or the keyboard is grabbed")
-            self:hide()
-            self:send_event(0, "closed")
-            return
-        end
-
-        self:emit_signal("shown", m)
-    end)
+--- Tell the application that the menu was closed.
+-- @method closed
+-- @noreturn
+function dbusmenu:closed()
+    self:send_event(0, "closed")
 end
 
 --- Stop using this menu.
+--
+-- The `removed` signal is emitted, so the menu handlers can hide the menu.
+--
 -- @method destroy
 -- @noreturn
 function dbusmenu:destroy()
-    self:hide()
+    if self._private.destroyed then return end
     self._private.destroyed = true
+    self:emit_signal("removed")
 end
+
+--- Has the menu been destroyed (for example because the item went away)?
+-- @method is_destroyed
+-- @treturn boolean
+function dbusmenu:is_destroyed()
+    return self._private.destroyed or false
+end
+
+--- Emitted when the menu is destroyed (the item went away, or changed its
+-- menu). A displayed menu should be hidden.
+-- @signal removed
 
 local function new(_, connection, service, path, args)
     local self = gobject { enable_properties = false }
@@ -525,9 +255,12 @@ local function new(_, connection, service, path, args)
     rawset(self, "service", service)
     rawset(self, "path", path)
 
+    -- The application provided icon theme path (for the `icon-name` of the
+    -- entries).
+    rawset(self, "icon_theme_path", args.icon_theme_path)
+
     self._private = {
         connection = connection,
-        theme_path = args.icon_theme_path,
     }
 
     gtable.crush(self, dbusmenu, true)

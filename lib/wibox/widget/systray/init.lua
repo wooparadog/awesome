@@ -17,9 +17,10 @@
 -- * A left click activates the item. When the item has no such action, its
 --   menu is shown instead.
 -- * A middle click triggers the secondary action.
--- * A right click shows the item menu. The menu is a native GTK menu (like
---   the menus of the XEmbed icons). GTK 3 is required for the menus. Without
---   it, the application is asked to display its own menu.
+-- * A right click shows the item menu. The menu is displayed by the
+--   `request::menu` handler, with `awful.menu` by default (see
+--   `awful.statusnotifier`). When no handler is connected, the application is
+--   asked to display its own menu.
 -- * Scrolling is forwarded to the item.
 --
 -- The StatusNotifierItem support can be disabled with the
@@ -108,7 +109,7 @@ local sni_icon_size = nil
 -- missing from the theme (and the themes it inherits) are looked up in the
 -- `hicolor` theme.
 --
--- The menus are rendered by GTK and use GTK's own icon theme.
+-- The menu icons use this theme too.
 --
 -- @beautiful beautiful.systray_icon_theme
 -- @tparam[opt=nil] string|nil systray_icon_theme
