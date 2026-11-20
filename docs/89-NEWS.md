@@ -45,6 +45,8 @@ This document was last updated at commit v4.3-197-g9085ed631.
   Awesome provides the `StatusNotifierWatcher` and `StatusNotifierHost` D-Bus
   services, so bridges such as `snixembed` are no longer needed (and should
   not be used, since they would duplicate the icons).
+  The items survive `awesome.restart()`, even those of applications (such as
+  Chromium and Electron ones) which only register their item when they start.
 
 ## Noteworthy fixes
 
