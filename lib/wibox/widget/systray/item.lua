@@ -23,6 +23,9 @@ local capi = { mouse = mouse }
 
 local item = {}
 
+-- The connected class signal handlers (see `request::menu`).
+local class_signals, class_signal_functions
+
 --- The application provided identifier (usually the application name).
 -- @property id
 -- @tparam[opt=""] string id
@@ -120,6 +123,38 @@ local item = {}
 --- Emitted once the properties have been loaded for the first time.
 -- @signal ready
 -- @hidden
+
+--- Emitted (on the class) when the menu of an item must be displayed.
+--
+-- This is a class signal:
+--
+--    local sni_item = require("wibox.widget.systray.item")
+--    sni_item.connect_signal("request::menu", function(item, context, hints)
+--        -- Display hints.layout at hints.coords.
+--    end)
+--
+-- `awful.statusnotifier.menu.default` (the default handler) displays the
+-- menu with `awful.menu`, and `awful.statusnotifier.gtk_menu` provides a
+-- handler using GTK menus. When no handler is connected, the application is
+-- asked to display its own menu.
+--
+-- The handler is responsible for calling `hints.menu:opened()` once the
+-- menu is displayed, `hints.menu:activate(id)` when an entry is selected and
+-- `hints.menu:closed()` once it is closed. It should hide the menu when
+-- `hints.menu` emits `removed`.
+--
+-- @signal request::menu
+-- @tparam wibox.widget.systray.item item The item.
+-- @tparam string context `button` (a right click) or `activate` (a left
+--  click on an item without a primary action).
+-- @tparam table hints
+-- @tparam wibox.widget.systray.dbusmenu hints.menu The menu (to send the
+--  events).
+-- @tparam table hints.layout The root node of the layout: `{ id = ..., props
+--  = { label = ..., ... }, children = { ... } }` (see
+--  `wibox.widget.systray.dbusmenu.parse_layout`).
+-- @tparam table hints.coords The position of the menu (`x` and `y`).
+-- @tparam integer hints.button The mouse button which triggered the menu.
 
 -- Map D-Bus property names to Lua property names.
 local property_names = {
@@ -425,6 +460,35 @@ function item:_clear_icon_cache()
     self._private.icon_cache = {}
 end
 
+--- Get the item menu.
+-- @method get_menu
+-- @treturn wibox.widget.systray.dbusmenu|nil The menu, if the item has one.
+function item:get_menu()
+    local path = self.menu_path
+
+    if (not path) or path == "" or path == "/" or path == "/NO_DBUSMENU" then
+        return nil
+    end
+
+    local m = self._private.menu
+
+    if m and m.path == path then return m end
+
+    if m then m:destroy() end
+
+    local dbusmenu = require("wibox.widget.systray.dbusmenu")
+
+    m = dbusmenu(
+        self._private.connection,
+        self._private.unique_name or self.service,
+        path,
+        { icon_theme_path = self.icon_theme_path }
+    )
+    self._private.menu = m
+
+    return m
+end
+
 local function coords(x, y)
     if not (x and y) then
         local c = capi.mouse.coords()
@@ -444,12 +508,12 @@ end
 -- @noreturn
 function item:activate(x, y)
     if self.item_is_menu then
-        self:show_menu(x, y, 1)
+        self:show_menu(x, y, 1, "activate")
         return
     end
 
     call(self, "Activate", coords(x, y), function(_, err)
-        if err then self:show_menu(x, y, 1) end
+        if err then self:show_menu(x, y, 1, "activate") end
     end)
 end
 
@@ -471,13 +535,57 @@ function item:context_menu(x, y)
     call(self, "ContextMenu", coords(x, y))
 end
 
---- Show the menu (the application context menu).
+--- Show the menu.
+--
+-- The `com.canonical.dbusmenu` layout is fetched and `request::menu` is
+-- emitted to display it. When the item has no such menu, when the menu is
+-- empty or when no handler is connected to `request::menu`, the application
+-- is asked to display its own menu (`context_menu`).
+--
 -- @method show_menu
 -- @tparam[opt=mouse.coords().x] integer x
 -- @tparam[opt=mouse.coords().y] integer y
+-- @tparam[opt=3] integer button The mouse button which triggered the menu.
+-- @tparam[opt="button"] string context Why the menu is shown (`button` or
+--  `activate`, when the item has no primary action).
 -- @noreturn
-function item:show_menu(x, y)
-    self:context_menu(x, y)
+function item:show_menu(x, y, button, context)
+    local m = self:get_menu()
+
+    if not m then
+        self:context_menu(x, y)
+        return
+    end
+
+    if not (x and y) then
+        local c = capi.mouse.coords()
+        x, y = x or c.x, y or c.y
+    end
+
+    -- Ignore results from older requests.
+    self._private.menu_request = (self._private.menu_request or 0) + 1
+    local request = self._private.menu_request
+
+    m:fetch(function(root)
+        if self._private.removed or m:is_destroyed()
+          or request ~= self._private.menu_request then
+            return
+        end
+
+        local has_handler = #(class_signals["request::menu"] or {}) > 0
+
+        if not (root and has_handler and m.has_entries(root)) then
+            self:context_menu(x, y)
+            return
+        end
+
+        item.emit_signal("request::menu", self, context or "button", {
+            menu   = m,
+            layout = root,
+            coords = { x = x, y = y },
+            button = button or 3,
+        })
+    end)
 end
 
 --- Scroll on the item.
@@ -508,6 +616,11 @@ function item:_remove()
         self._private.subscription = nil
     end
 
+    if self._private.menu then
+        self._private.menu:destroy()
+        self._private.menu = nil
+    end
+
     self:emit_signal("removed")
 end
 
@@ -536,7 +649,9 @@ local function new(_, args)
 
     rawset(self, "get_tooltip", function(s) return s._private.values.tooltip end)
 
-    gtable.crush(self, item, true)
+    for k, v in pairs(item) do
+        if not class_signal_functions[k] then rawset(self, k, v) end
+    end
 
     local function subscribe()
         self._private.subscription = args.connection:signal_subscribe(
@@ -586,6 +701,15 @@ local function new(_, args)
 
     return self
 end
+
+-- The class signals. They are not copied to the objects, which have their
+-- own signals.
+class_signals = gobject._setup_class_signals(item)
+class_signal_functions = {
+    connect_signal    = true,
+    disconnect_signal = true,
+    emit_signal       = true,
+}
 
 return setmetatable(item, { __call = new })
 

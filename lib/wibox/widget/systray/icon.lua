@@ -2,7 +2,7 @@
 -- Icon helpers for the StatusNotifierItem implementation.
 --
 -- This module converts the various icon representations used by
--- StatusNotifierItem into something awesome can display:
+-- StatusNotifierItem and DBusMenu into something awesome can display:
 --
 -- * `a(iiay)` pixmaps (non-premultiplied ARGB32 in network byte order),
 -- * freedesktop icon names, optionally with an application specific theme
