@@ -17,6 +17,7 @@ local gtable = require("gears.table")
 local gtimer = require("gears.timer")
 local gdebug = require("gears.debug")
 local protected_call = require("gears.protected_call")
+local icon = require("wibox.widget.systray.icon")
 
 local capi = { mouse = mouse }
 
@@ -214,6 +215,10 @@ local function apply_properties(self, raw)
         self:emit_signal("property::tooltip", value)
     end
 
+    if changed then
+        self:_clear_icon_cache()
+    end
+
     self._private.raw = raw
 
     return changed
@@ -360,6 +365,66 @@ function item:_queue_refresh()
     end)
 end
 
+--- Get the status-dependent icon.
+--
+-- The returned table has either a `path` (an image file) or a `surface`
+-- key. The `symbolic` key is true for symbolic icons, which should be
+-- recolored.
+--
+-- @method get_icon
+-- @tparam[opt=32] integer size The desired icon size in pixels.
+-- @treturn table|nil The icon.
+function item:get_icon(size)
+    size = size or 32
+
+    local cache = self._private.icon_cache
+
+    if cache[size] ~= nil then return cache[size] or nil end
+
+    local raw = self._private.raw
+    local attention = self.status == "NeedsAttention"
+    local theme_path = self.icon_theme_path
+
+    local candidates = {}
+
+    if attention then
+        table.insert(candidates, { name = self.attention_icon_name })
+        table.insert(candidates, { pixmap = raw.AttentionIconPixmap })
+    end
+
+    table.insert(candidates, { name = self.icon_name })
+    table.insert(candidates, { pixmap = raw.IconPixmap })
+
+    local ret
+
+    for _, c in ipairs(candidates) do
+        if c.name and c.name ~= "" then
+            local path = icon.lookup(c.name, theme_path, size)
+            if path then
+                ret = { path = path, symbolic = icon.is_symbolic(path) }
+                break
+            end
+        elseif c.pixmap then
+            local surf = icon.pixmap_to_surface(c.pixmap, size)
+            if surf then
+                ret = { surface = surf }
+                break
+            end
+        end
+    end
+
+    cache[size] = ret or false
+
+    return ret
+end
+
+--- Forget the cached icons (for example after changing the icon theme).
+-- @method _clear_icon_cache
+-- @hidden
+function item:_clear_icon_cache()
+    self._private.icon_cache = {}
+end
+
 local function coords(x, y)
     if not (x and y) then
         local c = capi.mouse.coords()
@@ -459,6 +524,7 @@ local function new(_, args)
         interface   = args.prefix .. ".StatusNotifierItem",
         raw         = {},
         values      = {},
+        icon_cache  = {},
     }
 
     -- Expose the D-Bus properties as read-only Lua properties.

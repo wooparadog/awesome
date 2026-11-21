@@ -6,7 +6,8 @@
 -- specification instead of the legacy XEmbed protocol.
 --
 -- This module implements both the `StatusNotifierWatcher` (the registry) and
--- a `StatusNotifierHost` (the tray).
+-- a `StatusNotifierHost` (the tray). It is started by `wibox.widget.systray`,
+-- which displays the items next to the XEmbed icons.
 --
 -- If another program (such as `snixembed` or another panel) already acts as
 -- the watcher, awesome uses it instead of providing its own.
@@ -239,7 +240,8 @@ end
 
 --- Start the StatusNotifierWatcher and StatusNotifierHost.
 --
--- Calling it more than once has no effect.
+-- This is called automatically by `wibox.widget.systray`. Calling it more
+-- than once has no effect.
 --
 -- @staticfct wibox.widget.systray.statusnotifier.start
 -- @noreturn
