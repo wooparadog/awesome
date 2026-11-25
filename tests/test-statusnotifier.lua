@@ -11,6 +11,7 @@ local gdebug = require("gears.debug")
 local statusnotifier = require("wibox.widget.systray.statusnotifier")
 local sni_item = require("wibox.widget.systray.item")
 local sni_menu = require("awful.statusnotifier.menu")
+local watcher = require("wibox.widget.systray.watcher")
 
 -- Record the warnings. The expected ones are not printed, since any warning
 -- in the log fails the test (`tests/run.sh -W`). The others still are.
@@ -202,6 +203,9 @@ end
 -- A second application, registered using a well-known name instead of an
 -- object path (like KDE applications do).
 local named = { title = "Named app" }
+
+-- The items adopted from the bus.
+local adopted = {}
 
 -- Export a minimal item at `path` on a new connection.
 local function new_item_connection(path)
@@ -641,18 +645,14 @@ local steps = {
         return true
     end,
 
-    -- Enabling them again starts everything again. Like real applications, the
-    -- fake application registers again once the new watcher is up.
+    -- Enabling them again starts everything again. The fake application does
+    -- not register again (like Chromium and Electron based applications,
+    -- which only register once): the new watcher adopts the items of the
+    -- previous one. The bogus item is not adopted, since it does not exist.
     function(count)
         if count == 1 then
             tray.statusnotifier_enabled = true
             assert(enabled_changes[3] == true)
-        end
-
-        if not disabled.registered_again then
-            if not has_owner("org.kde.StatusNotifierWatcher") then return end
-            register_app()
-            disabled.registered_again = true
         end
 
         if added == disabled.added then return end
@@ -703,7 +703,7 @@ local steps = {
 
         assert(host_registered == true)
 
-        -- The item is registered once.
+        -- The item is registered once, and the bogus item was not adopted.
         local items = disabled.watcher_items
         assert(#items == 1, #items)
         assert(items[1] == item.service .. "/StatusNotifierItem", items[1])
@@ -779,6 +779,75 @@ local steps = {
         return true
     end,
 
+    -- Items already on the bus are adopted when the watcher (re)starts, even
+    -- if they never register again (like Chromium and Electron apps after
+    -- an `awesome.restart`).
+    function(count)
+        if count == 1 then
+            -- An item with a well-known name, which never registers.
+            adopted.named_conn = new_item_connection("/StatusNotifierItem")
+            own_name(adopted.named_conn, "org.kde.StatusNotifierItem-4343-1")
+
+            -- An item only known by the unique name of its connection, as
+            -- saved by the previous awesome instance. A dead item is saved
+            -- too, as well as the named item, which must not be duplicated.
+            adopted.unique_conn = new_item_connection("/Custom/Path")
+            adopted.unique_name = adopted.unique_conn:get_unique_name()
+
+            local f = assert(io.open(watcher._state_file("org.kde"), "w"))
+            f:write(adopted.unique_name, "/Custom/Path\n")
+            f:write(":1.999999/StatusNotifierItem\n")
+            f:write("org.kde.StatusNotifierItem-4343-1/StatusNotifierItem\n")
+            f:close()
+
+            watcher._adopt_existing("org.kde")
+        end
+
+        local items = statusnotifier.get_items()
+
+        if #items < 2 then return end
+
+        local found = {}
+
+        for _, i in ipairs(items) do
+            found[i.service .. i.path] = true
+        end
+
+        assert(found[adopted.unique_name .. "/Custom/Path"])
+        assert(found["org.kde.StatusNotifierItem-4343-1/StatusNotifierItem"])
+
+        -- The state file is consumed.
+        assert(not io.open(watcher._state_file("org.kde"), "r"))
+
+        -- Wait a bit to check that nothing else shows up.
+        if count < 10 then return end
+
+        assert(#statusnotifier.get_items() == 2, #statusnotifier.get_items())
+        assert(count_icons() == 2)
+
+        return true
+    end,
+
+    -- Adopting again does not duplicate anything.
+    function(count)
+        if count == 1 then
+            watcher._adopt_existing("org.kde")
+        end
+
+        if count < 10 then return end
+
+        assert(#statusnotifier.get_items() == 2, #statusnotifier.get_items())
+
+        adopted.named_conn:close_sync(nil)
+        adopted.unique_conn:close_sync(nil)
+
+        return true
+    end,
+
+    function()
+        if #statusnotifier.get_items() > 0 then return end
+        return true
+    end,
 }
 
 -- Leave enough time for the initial load retries of the bogus item.

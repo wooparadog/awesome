@@ -25,6 +25,10 @@
 --   asked to display its own menu.
 -- * Scrolling is forwarded to the item.
 --
+-- The items registered with awesome are kept across `awesome.restart()`: they
+-- are saved in `$XDG_RUNTIME_DIR` and adopted by the new instance, as are the
+-- items owning a well-known `org.kde.StatusNotifierItem-*` name.
+--
 -- The StatusNotifierItem support is disabled by default. To enable it:
 --
 --    local tray = wibox.widget.systray()
