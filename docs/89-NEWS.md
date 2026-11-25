@@ -34,6 +34,15 @@ This document was last updated at commit v4.3-197-g9085ed631.
 * The `awful.widget.tasklist` and `awful.widget.taglist` will now set the
   `client` and `tag` properly respectively on each widget of the template
   automatically. This reduces the amount of boilerplate code.
+* StatusNotifierItem (the D-Bus based system tray used by Electron, Qt,
+  libappindicator and KDE applications) is now supported. Since it needs a
+  D-Bus session bus, it is disabled by default: set the
+  `statusnotifier_enabled` property of the systray widget to `true` to enable
+  it. `wibox.widget.systray` then displays these items next to the XEmbed
+  icons.
+  Awesome provides the `StatusNotifierWatcher` and `StatusNotifierHost` D-Bus
+  services, so bridges such as `snixembed` are no longer needed (and should
+  not be used, since they would duplicate the icons).
 
 ## Noteworthy fixes
 

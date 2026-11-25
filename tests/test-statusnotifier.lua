@@ -1,9 +1,10 @@
--- Test the StatusNotifierItem support (the D-Bus side, without display).
+-- Test the StatusNotifierItem support of `wibox.widget.systray`.
 --
 -- A fake application is exported on a separate D-Bus connection (with its own
 -- unique name) from within awesome itself.
 
 local runner = require("_runner")
+local wibox = require("wibox")
 local lgi = require("lgi")
 local Gio, GLib, GObject = lgi.Gio, lgi.GLib, lgi.GObject
 local gdebug = require("gears.debug")
@@ -120,6 +121,7 @@ local function start_app()
             return item_property(name)
         end),
         nil)
+
 end
 
 local function register_app(path)
@@ -209,10 +211,35 @@ end
 
 -- The test ---------------------------------------------------------------------
 
--- Nothing starts the StatusNotifierItem support yet.
-statusnotifier.start()
+local tray = wibox.widget.systray()
 
-local added, removed, updated, item = 0, 0, 0, nil
+local w = wibox {
+    x = 0, y = 0, width = 200, height = 20, visible = true,
+    widget = tray,
+}
+
+-- The number of displayed StatusNotifierItems.
+local function count_icons()
+    local ctx = { screen = screen.primary, wibox = w }
+    local width = tray:fit(ctx, 200, 20)
+    local placements = tray:layout(ctx, width, 20)
+
+    -- Each icon uses the full height.
+    for _, p in ipairs(placements) do
+        assert(p._height == 20, p._height)
+    end
+
+    return #placements, width
+end
+
+local function click(button)
+    -- Click on the first icon.
+    mouse.coords { x = 10, y = 10 }
+    root.fake_input("button_press", button)
+    root.fake_input("button_release", button)
+end
+
+local added, removed, item = 0, 0, nil
 
 statusnotifier:connect_signal("item::added", function(_, i)
     added = added + 1
@@ -222,12 +249,6 @@ end)
 statusnotifier:connect_signal("item::removed", function(_, i)
     if i == item then
         removed = removed + 1
-    end
-end)
-
-statusnotifier:connect_signal("item::updated", function(_, i)
-    if i == item then
-        updated = updated + 1
     end
 end)
 
@@ -265,9 +286,30 @@ local function count_handlers(name)
     return n
 end
 
-local disabled = {}
+local enabled_changes, disabled = {}, {}
+
+tray:connect_signal("property::statusnotifier_enabled", function(_, v)
+    table.insert(enabled_changes, v)
+end)
 
 local steps = {
+    -- The StatusNotifierItem support is disabled by default (it needs D-Bus):
+    -- nothing is started on the bus. Then enable it.
+    function(count)
+        assert(tray.statusnotifier_enabled == false)
+
+        -- Let the delayed start of the widget run.
+        if count < 3 then return end
+
+        assert(not has_owner("org.kde.StatusNotifierWatcher"))
+        assert(#sni_names() == 0, #sni_names())
+
+        tray.statusnotifier_enabled = true
+        assert(enabled_changes[1] == true)
+
+        return true
+    end,
+
     -- Wait for our watcher to be up, then start the application.
     function()
         local done = false
@@ -301,9 +343,15 @@ local steps = {
         assert(item.service:sub(1, 1) == ":")
         assert(item.tooltip.title == "Tip title")
 
-        -- The pixmap is kept as received.
-        local pixmap = item._private.raw.IconPixmap
-        assert(pixmap and pixmap:n_children() == 1)
+        -- The pixmap was correctly converted (and NUL bytes were kept).
+        local ic = item:get_icon(16)
+        assert(ic and ic.surface, "no icon")
+        assert(ic.surface.width == 2 and ic.surface.height == 1)
+
+        -- The widget displays it.
+        local n, width = count_icons()
+        assert(n == 1)
+        assert(width == 20, width)
 
         watcher_property("IsStatusNotifierHostRegistered", function(v)
             host_registered = v and v.value
@@ -349,20 +397,20 @@ local steps = {
         assert(added == 1, added)
         assert(#statusnotifier.get_items() == 1)
         assert(statusnotifier.get_items()[1] == item)
+        assert(count_icons() == 1)
 
         return true
     end,
 
-    -- Method calls are forwarded.
+    -- Clicks are forwarded.
     function(count)
         if count == 1 then
-            item:activate(10, 10)
-            item:secondary_activate(10, 10)
-            item:scroll(-1, "vertical")
-            item:context_menu(10, 10)
+            click(1)
+            click(2)
+            click(4)
         end
 
-        if #app.calls < 4 then return end
+        if #app.calls < 3 then return end
 
         assert(app.calls[1].method == "Activate")
         assert(app.calls[1].params[1] == 10 and app.calls[1].params[2] == 10)
@@ -370,8 +418,6 @@ local steps = {
         assert(app.calls[3].method == "Scroll")
         assert(app.calls[3].params[1] == -1)
         assert(app.calls[3].params[2] == "vertical")
-        assert(app.calls[4].method == "ContextMenu")
-        assert(app.calls[4].params[1] == 10 and app.calls[4].params[2] == 10)
 
         return true
     end,
@@ -379,7 +425,6 @@ local steps = {
     -- Property updates are followed.
     function(count)
         if count == 1 then
-            updated = 0
             app.title = "New title"
             app_conn:emit_signal(nil, "/StatusNotifierItem",
                 "org.kde.StatusNotifierItem", "NewTitle", nil)
@@ -387,14 +432,13 @@ local steps = {
 
         if item.title ~= "New title" then return end
 
-        assert(updated == 1, updated)
-
         return true
     end,
 
-    -- Status updates are followed.
+    -- Passive items can be hidden.
     function(count)
         if count == 1 then
+            tray.show_passive = false
             app.status = "Passive"
             app_conn:emit_signal(nil, "/StatusNotifierItem",
                 "org.kde.StatusNotifierItem", "NewStatus",
@@ -403,30 +447,53 @@ local steps = {
 
         if item.status ~= "Passive" then return end
 
+        assert(count_icons() == 0)
         assert(#statusnotifier.get_items() == 1)
+        tray.show_passive = true
+        assert(count_icons() == 1)
 
         return true
     end,
 
-    -- Stopping the StatusNotifierItem support removes the items and releases
+    -- Right clicking asks the application to show its menu.
+    function(count)
+        if count == 1 then
+            click(3)
+        end
+
+        local last = app.calls[#app.calls]
+        if last.method ~= "ContextMenu" then return end
+
+        assert(last.params[1] == 10 and last.params[2] == 10)
+
+        return true
+    end,
+
+    -- Disabling the StatusNotifierItems removes them and releases
     -- everything on the bus.
     function(count)
         if count == 1 then
+            assert(tray.statusnotifier_enabled == true)
             disabled.item = item
             disabled.added = added
             disabled.handlers = count_handlers("item::added")
             assert(#sni_names() == 4, #sni_names())
-            statusnotifier.stop()
+            tray.statusnotifier_enabled = false
+            assert(tray.statusnotifier_enabled == false)
+            assert(enabled_changes[2] == false)
 
             -- The items are removed synchronously.
             assert(removed == 1, removed)
             assert(#statusnotifier.get_items() == 0)
+            assert(count_icons() == 0)
             assert(item._private.removed)
             assert(not item._private.subscription)
         end
 
         if has_owner("org.kde.StatusNotifierWatcher") then return end
         if #sni_names() > 0 then return end
+
+        assert(count_icons() == 0)
 
         return true
     end,
@@ -437,16 +504,18 @@ local steps = {
 
         assert(#sni_names() == 0)
         assert(#statusnotifier.get_items() == 0)
+        assert(count_icons() == 0)
         assert(added == disabled.added)
 
         return true
     end,
 
-    -- Starting it again starts everything again. Like real applications, the
+    -- Enabling them again starts everything again. Like real applications, the
     -- fake application registers again once the new watcher is up.
     function(count)
         if count == 1 then
-            statusnotifier.start()
+            tray.statusnotifier_enabled = true
+            assert(enabled_changes[3] == true)
         end
 
         if not disabled.registered_again then
@@ -463,6 +532,7 @@ local steps = {
         assert(item.path == "/StatusNotifierItem")
         assert(item.title == "New title")
         assert(#statusnotifier.get_items() == 1)
+        assert(count_icons() == 1)
 
         -- The signals are not connected twice.
         assert(count_handlers("item::added") == disabled.handlers)
@@ -480,6 +550,7 @@ local steps = {
 
         assert(added == disabled.added + 1, added)
         assert(#statusnotifier.get_items() == 1)
+        assert(count_icons() == 1)
 
         return true
     end,
@@ -509,6 +580,7 @@ local steps = {
         assert(#sni_names() == 4, #sni_names())
         assert(#statusnotifier.get_items() == 1)
         assert(added == disabled.added + 1)
+        assert(count_icons() == 1)
 
         -- For the next step.
         removed = 0
@@ -525,6 +597,7 @@ local steps = {
         if removed == 0 then return end
 
         assert(#statusnotifier.get_items() == 0)
+        assert(count_icons() == 0)
 
         return true
     end,
@@ -541,6 +614,9 @@ local steps = {
 
         assert(named.item.service == named.name, named.item.service)
         assert(named.item.title == "Named app")
+
+        -- Without a usable icon, a fallback is used, so the item is visible.
+        assert(count_icons() == 1)
 
         return true
     end,
@@ -566,11 +642,17 @@ local steps = {
 
         if #statusnotifier.get_items() > 0 then return end
 
+        assert(count_icons() == 0)
+
         return true
     end,
+
 }
 
 -- Leave enough time for the initial load retries of the bogus item.
 runner.run_steps(steps, { wait_per_step = 5 })
+
+-- Keep a reference to the wibox.
+assert(w)
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
