@@ -19,7 +19,10 @@
 -- * A left click activates the item. When the item has no such action, its
 --   menu is shown instead.
 -- * A middle click triggers the secondary action.
--- * A right click asks the application to display the item menu.
+-- * A right click shows the item menu. The menu is displayed by the
+--   `request::menu` handler, with `awful.menu` by default (see
+--   `awful.statusnotifier`). When no handler is connected, the application is
+--   asked to display its own menu.
 -- * Scrolling is forwarded to the item.
 --
 -- The StatusNotifierItem support is disabled by default. To enable it:
@@ -113,6 +116,8 @@ local sni_icon_size = nil
 -- in `$XDG_CONFIG_HOME/gtk-3.0/settings.ini`) and finally `Adwaita`. Icons
 -- missing from the theme (and the themes it inherits) are looked up in the
 -- `hicolor` theme.
+--
+-- The menu icons use this theme too.
 --
 -- @beautiful beautiful.systray_icon_theme
 -- @tparam[opt=nil] string|nil systray_icon_theme

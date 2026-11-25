@@ -9,6 +9,8 @@ local lgi = require("lgi")
 local Gio, GLib, GObject = lgi.Gio, lgi.GLib, lgi.GObject
 local gdebug = require("gears.debug")
 local statusnotifier = require("wibox.widget.systray.statusnotifier")
+local sni_item = require("wibox.widget.systray.item")
+local sni_menu = require("awful.statusnotifier.menu")
 
 -- Record the warnings. The expected ones are not printed, since any warning
 -- in the log fails the test (`tests/run.sh -W`). The others still are.
@@ -76,10 +78,27 @@ local item_info = Gio.DBusInterfaceInfo {
     },
 }
 
+local menu_info = Gio.DBusInterfaceInfo {
+    name = "com.canonical.dbusmenu",
+    methods = {
+        Gio.DBusMethodInfo { name = "GetLayout",
+            in_args = { arg("parentId", "i"), arg("recursionDepth", "i"),
+                arg("propertyNames", "as") },
+            out_args = { arg("revision", "u"), arg("layout", "(ia{sv}av)") } },
+        Gio.DBusMethodInfo { name = "Event",
+            in_args = { arg("id", "i"), arg("eventId", "s"), arg("data", "v"),
+                arg("timestamp", "u") } },
+        Gio.DBusMethodInfo { name = "AboutToShow",
+            in_args = { arg("id", "i") }, out_args = { arg("needUpdate", "b") } },
+    },
+}
+
 local app = {
     title       = "Fake app",
     status      = "Active",
     calls       = {},
+    events      = {},
+    about_to_show = {},
 }
 
 -- A 2x1 pixmap: an opaque red pixel and a half transparent white one. The
@@ -99,6 +118,37 @@ local function item_property(name)
     elseif name == "Menu" then return GLib.Variant("o", "/MenuBar")
     elseif name == "ItemIsMenu" then return GLib.Variant("b", false)
     end
+end
+
+local function menu_node(id, props, children)
+    local p = {}
+    for k, v in pairs(props) do p[k] = v end
+    return GLib.Variant("(ia{sv}av)", { id, p, children or {} })
+end
+
+local function menu_layout()
+    return GLib.Variant("(u(ia{sv}av))", { 1, {
+        0, {}, {
+            -- A leading separator, which must be skipped.
+            menu_node(1, { type = GLib.Variant("s", "separator") }),
+            menu_node(2, { label = GLib.Variant("s", "_Open") }),
+            menu_node(3, {
+                label = GLib.Variant("s", "Toggle"),
+                ["toggle-type"] = GLib.Variant("s", "checkmark"),
+                ["toggle-state"] = GLib.Variant("i", 1),
+            }),
+            menu_node(4, { label = GLib.Variant("s", "Hidden"),
+                visible = GLib.Variant("b", false) }),
+            menu_node(5, { label = GLib.Variant("s", "Disabled"),
+                enabled = GLib.Variant("b", false) }),
+            menu_node(6, { type = GLib.Variant("s", "separator") }),
+            menu_node(7, { label = GLib.Variant("s", "More"),
+                ["children-display"] = GLib.Variant("s", "submenu") }, {
+                menu_node(8, { label = GLib.Variant("s", "Sub item") }),
+            }),
+            menu_node(9, { label = GLib.Variant("s", "_Quit") }),
+        }
+    }})
 end
 
 local app_conn
@@ -122,6 +172,21 @@ local function start_app()
         end),
         nil)
 
+    app_conn:register_object("/MenuBar", menu_info,
+        GObject.Closure(function(_, _, _, _, method, params, invocation)
+            if method == "GetLayout" then
+                invocation:return_value(menu_layout())
+            elseif method == "AboutToShow" then
+                table.insert(app.about_to_show, params.value[1])
+                invocation:return_value(GLib.Variant("(b)", { false }))
+            elseif method == "Event" then
+                table.insert(app.events, {
+                    id = params.value[1], event = params.value[2]
+                })
+                invocation:return_value(GLib.Variant("()"))
+            end
+        end),
+        nil, nil)
 end
 
 local function register_app(path)
@@ -239,6 +304,11 @@ local function click(button)
     root.fake_input("button_release", button)
 end
 
+local function key(name)
+    root.fake_input("key_press", name)
+    root.fake_input("key_release", name)
+end
+
 local added, removed, item = 0, 0, nil
 
 statusnotifier:connect_signal("item::added", function(_, i)
@@ -252,7 +322,14 @@ statusnotifier:connect_signal("item::removed", function(_, i)
     end
 end)
 
-local host_registered, bogus_registered_at, bogus_warned_at
+local host_registered, menu, bogus_registered_at, bogus_warned_at
+
+-- The last menu event of the given type sent to the application.
+local function last_event(name)
+    for i = #app.events, 1, -1 do
+        if app.events[i].event == name then return app.events[i] end
+    end
+end
 
 -- Is `name` owned on the session bus?
 local function has_owner(name)
@@ -455,16 +532,70 @@ local steps = {
         return true
     end,
 
-    -- Right clicking asks the application to show its menu.
+    -- The menu is fetched and displayed with `awful.menu` (the default
+    -- `request::menu` handler) when right clicking.
+    function(count)
+        if count == 1 then click(3) end
+
+        menu = sni_menu.get_visible()
+
+        if not menu then return end
+
+        assert(app.about_to_show[1] == 0)
+        assert(menu.wibox.visible)
+        assert(app.events[1].id == 0 and app.events[1].event == "opened")
+
+        -- Open, Toggle, Disabled, separator, More, Quit
+        assert(#menu.items == 6, #menu.items)
+        assert(menu.items[1].akey == "o")
+        assert(menu.items[1].label.text == "Open")
+        assert(menu.items[2].icon.text == "☑") -- checkmark
+        assert(menu.items[3].cmd == nil) -- disabled
+        assert(menu.items[4].label == nil) -- separator
+        assert(type(menu.items[5].cmd) == "table") -- submenu
+        assert(#menu.items[5].cmd == 1)
+        assert(menu.items[6].akey == "q")
+
+        return true
+    end,
+
+    -- The menu supports the keyboard. Select "Open".
     function(count)
         if count == 1 then
+            key("Down")
+            key("Return")
+        end
+
+        if not last_event("clicked") then return end
+
+        assert(last_event("clicked").id == 2, tostring(last_event("clicked").id))
+
+        return true
+    end,
+
+    -- The menu is closed.
+    function()
+        if sni_menu.get_visible() or menu.wibox.visible then return end
+        if not last_event("closed") then return end
+
+        return true
+    end,
+
+    -- Without a `request::menu` handler, the application is asked to show
+    -- its own menu.
+    function(count)
+        if count == 1 then
+            app.calls = {}
+            sni_item.disconnect_signal("request::menu", sni_menu.default)
             click(3)
         end
 
         local last = app.calls[#app.calls]
-        if last.method ~= "ContextMenu" then return end
 
-        assert(last.params[1] == 10 and last.params[2] == 10)
+        if not (last and last.method == "ContextMenu") then return end
+
+        assert(not sni_menu.get_visible())
+        sni_item.connect_signal("request::menu", sni_menu.default)
 
         return true
     end,
@@ -614,6 +745,7 @@ local steps = {
 
         assert(named.item.service == named.name, named.item.service)
         assert(named.item.title == "Named app")
+        assert(named.item:get_menu() == nil)
 
         -- Without a usable icon, a fallback is used, so the item is visible.
         assert(count_icons() == 1)
