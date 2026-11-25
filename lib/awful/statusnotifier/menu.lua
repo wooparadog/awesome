@@ -12,6 +12,47 @@
 -- the menu is closed with `Escape` or a right click on the menu, not by
 -- clicking elsewhere.
 --
+-- **Styling.** The menus use the same theme variables as the other
+-- `awful.menu` menus:
+--
+-- * `beautiful.menu_bg_normal`, `beautiful.menu_fg_normal`: the entries;
+-- * `beautiful.menu_bg_focus`, `beautiful.menu_fg_focus`: the selected entry;
+-- * `beautiful.menu_fg_disabled`: the disabled entries;
+-- * `beautiful.menu_border_color`, `beautiful.menu_border_width`;
+-- * `beautiful.menu_font`;
+-- * `beautiful.menu_height` (of an entry) and `beautiful.menu_width` (the
+--   minimum width: the menu grows to fit the longest label);
+-- * `beautiful.menu_submenu` or `beautiful.menu_submenu_icon`: the submenu
+--   indicator.
+--
+-- The entry icons are looked up in `beautiful.systray_icon_theme` (see
+-- `wibox.widget.systray`).
+--
+-- For example, in `theme.lua`:
+--
+--    theme.menu_bg_normal    = "#222222"
+--    theme.menu_fg_normal    = "#aaaaaa"
+--    theme.menu_bg_focus     = "#535d6c"
+--    theme.menu_fg_focus     = "#ffffff"
+--    theme.menu_fg_disabled  = "#666666"
+--    theme.menu_border_width = 1
+--    theme.menu_border_color = "#535d6c"
+--    theme.menu_height       = 20
+--    theme.menu_width        = 160
+--
+-- **Using the GTK theme.** To make the menus look like the GTK applications,
+-- use the `gtk` theme shipped with awesome (it sets the `menu_*` variables
+-- from the GTK theme), or set them from `beautiful.gtk` in your own theme:
+--
+--    local gtk = require("beautiful.gtk").get_theme_variables()
+--
+--    theme.menu_bg_normal    = gtk.menubar_bg_color
+--    theme.menu_fg_normal    = gtk.menubar_fg_color
+--    theme.menu_bg_focus     = gtk.selected_bg_color
+--    theme.menu_fg_focus     = gtk.selected_fg_color
+--    theme.menu_border_color = gtk.button_border_color
+--    theme.menu_font         = gtk.font_family .. " " .. gtk.font_size
+--
 -- To use another handler instead:
 --
 --    local sni_item = require("wibox.widget.systray.item")
@@ -19,11 +60,20 @@
 --        awful.statusnotifier.menu.default)
 --    sni_item.connect_signal("request::menu", my_handler)
 --
--- See `awful.statusnotifier.gtk_menu` to use GTK menus instead.
---
 -- @author WooParadog
 -- @copyright 2026 WooParadog
 -- @module awful.statusnotifier.menu
+-- @usebeautiful beautiful.menu_bg_normal
+-- @usebeautiful beautiful.menu_fg_normal
+-- @usebeautiful beautiful.menu_bg_focus
+-- @usebeautiful beautiful.menu_fg_focus
+-- @usebeautiful beautiful.menu_border_color
+-- @usebeautiful beautiful.menu_border_width
+-- @usebeautiful beautiful.menu_font
+-- @usebeautiful beautiful.menu_height
+-- @usebeautiful beautiful.menu_width
+-- @usebeautiful beautiful.menu_submenu
+-- @usebeautiful beautiful.menu_submenu_icon
 ---------------------------------------------------------------------------
 
 local lgi = require("lgi")

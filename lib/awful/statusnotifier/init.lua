@@ -6,12 +6,10 @@
 -- `request::menu` class signal with the menu layout, and the connected
 -- handler displays it:
 --
--- * `awful.statusnotifier.menu.default` (the default) uses `awful.menu`, so
---   the menus follow the `menu_*` theme variables.
--- * `awful.statusnotifier.gtk_menu` (optional) uses native GTK 3 menus, like
---   the XEmbed icons:
---
---    require("awful.statusnotifier.gtk_menu").enable()
+-- `awful.statusnotifier.menu.default` (the default) uses `awful.menu`, so
+-- the menus follow the `menu_*` theme variables. See
+-- `awful.statusnotifier.menu` for how to style them, including with the GTK
+-- theme.
 --
 -- Any other function can be connected instead (see `request::menu`). When no
 -- handler is connected, the application is asked to display its own menu.
@@ -53,19 +51,8 @@
 -- @tparam integer hints.button The mouse button which triggered the menu.
 -- @classsignal
 
-local module = {
+return {
     menu = require("awful.statusnotifier.menu"),
 }
-
--- Do not load the GTK handler unless it is used.
-return setmetatable(module, {
-    __index = function(_, key)
-        if key == "gtk_menu" then
-            local m = require("awful.statusnotifier.gtk_menu")
-            rawset(module, key, m)
-            return m
-        end
-    end
-})
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

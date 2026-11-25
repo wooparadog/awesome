@@ -11,7 +11,6 @@ local gdebug = require("gears.debug")
 local statusnotifier = require("wibox.widget.systray.statusnotifier")
 local sni_item = require("wibox.widget.systray.item")
 local sni_menu = require("awful.statusnotifier.menu")
-local gtk_menu = require("awful.statusnotifier.gtk_menu")
 
 -- Record the warnings. The expected ones are not printed, since any warning
 -- in the log fails the test (`tests/run.sh -W`). The others still are.
@@ -578,66 +577,6 @@ local steps = {
     function()
         if sni_menu.get_visible() or menu.wibox.visible then return end
         if not last_event("closed") then return end
-
-        return true
-    end,
-
-    -- With `awful.statusnotifier.gtk_menu`, the menu is a GTK menu.
-    function(count)
-        if not gtk_menu.is_supported() then return true end
-
-        if count == 1 then
-            assert(gtk_menu.enable())
-            app.events = {}
-            click(3)
-        end
-
-        menu = gtk_menu.get_visible()
-
-        if not menu then return end
-
-        assert(last_event("opened"))
-        assert(not sni_menu.get_visible())
-
-        -- Open, Toggle, Disabled, separator, More, Quit
-        local children = menu:get_children()
-        assert(#children == 6, #children)
-        assert(children[1]:get_label() == "_Open")
-        assert(children[1]:get_use_underline())
-        assert(children[2]:get_active() == true) -- checkmark
-        assert(not children[3]:get_sensitive()) -- disabled
-        assert(children[4]:get_label() == nil or children[4]:get_label() == "")
-        assert(children[5]:get_submenu()) -- submenu
-        assert(children[6]:get_label() == "_Quit")
-
-        return true
-    end,
-
-    -- The GTK menu stays open after the button release and supports the
-    -- keyboard. Select "Open".
-    function(count)
-        if not gtk_menu.is_supported() then return true end
-
-        if count == 1 then
-            key("Down")
-            key("Return")
-        end
-
-        if not last_event("clicked") then return end
-
-        assert(last_event("clicked").id == 2, tostring(last_event("clicked").id))
-
-        return true
-    end,
-
-    -- The GTK menu is closed and destroyed. Go back to `awful.menu`.
-    function()
-        if not gtk_menu.is_supported() then return true end
-
-        if gtk_menu.get_visible() then return end
-        if not last_event("closed") then return end
-
-        gtk_menu.disable()
 
         return true
     end,
