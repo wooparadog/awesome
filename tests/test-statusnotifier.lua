@@ -293,6 +293,23 @@ tray:connect_signal("property::statusnotifier_enabled", function(_, v)
 end)
 
 local steps = {
+    -- The StatusNotifierItem support is disabled by default (it needs D-Bus):
+    -- nothing is started on the bus. Then enable it.
+    function(count)
+        assert(tray.statusnotifier_enabled == false)
+
+        -- Let the delayed start of the widget run.
+        if count < 3 then return end
+
+        assert(not has_owner("org.kde.StatusNotifierWatcher"))
+        assert(#sni_names() == 0, #sni_names())
+
+        tray.statusnotifier_enabled = true
+        assert(enabled_changes[1] == true)
+
+        return true
+    end,
+
     -- Wait for our watcher to be up, then start the application.
     function()
         local done = false
@@ -463,7 +480,7 @@ local steps = {
             assert(#sni_names() == 4, #sni_names())
             tray.statusnotifier_enabled = false
             assert(tray.statusnotifier_enabled == false)
-            assert(enabled_changes[1] == false)
+            assert(enabled_changes[2] == false)
 
             -- The items are removed synchronously.
             assert(removed == 1, removed)
@@ -498,7 +515,7 @@ local steps = {
     function(count)
         if count == 1 then
             tray.statusnotifier_enabled = true
-            assert(enabled_changes[2] == true)
+            assert(enabled_changes[3] == true)
         end
 
         if not disabled.registered_again then

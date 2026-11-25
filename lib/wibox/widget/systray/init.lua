@@ -1,13 +1,15 @@
 ---------------------------------------------------------------------------
 -- Container for the various system tray icons.
 --
--- Both kinds of system tray icons are displayed:
+-- Two kinds of system tray icons can be displayed:
 --
 -- * The legacy XEmbed icons (`_NET_SYSTEM_TRAY`).
 -- * The StatusNotifierItems, which many applications (Electron, Qt,
 --   Chromium, libappindicator, KDE, ...) use to export their icon and menu over
---   D-Bus. For these, awesome provides the `StatusNotifierWatcher` D-Bus
---   service (both `org.kde.StatusNotifierWatcher` and
+--   D-Bus. They are only displayed when the `statusnotifier_enabled`
+--   property is set to `true`, since they need a D-Bus session bus. awesome
+--   then provides the `StatusNotifierWatcher` D-Bus service (both
+--   `org.kde.StatusNotifierWatcher` and
 --   `org.freedesktop.StatusNotifierWatcher`), so programs such as `snixembed`
 --   are not needed (and would display each icon twice). When another program
 --   already provides it, that one is used instead.
@@ -20,11 +22,17 @@
 -- * A right click asks the application to display the item menu.
 -- * Scrolling is forwarded to the item.
 --
--- The StatusNotifierItem support can be disabled with the
--- `statusnotifier_enabled` property:
+-- The StatusNotifierItem support is disabled by default. To enable it:
 --
 --    local tray = wibox.widget.systray()
---    tray.statusnotifier_enabled = false
+--    tray.statusnotifier_enabled = true
+--
+-- or, in a declarative widget:
+--
+--    {
+--        widget                 = wibox.widget.systray,
+--        statusnotifier_enabled = true,
+--    }
 --
 -- @author Uli Schlachter
 -- @copyright 2010 Uli Schlachter
@@ -58,7 +66,7 @@ local horizontal = true
 local base_size = nil
 local reverse = false
 local display_on_screen = "primary"
-local statusnotifier_enabled = true
+local statusnotifier_enabled = false
 local show_passive = true
 
 -- The StatusNotifierItem support (loaded on demand).
@@ -671,16 +679,17 @@ end
 
 --- Display the StatusNotifierItems (D-Bus tray icons).
 --
--- When this is `false`, awesome does not provide the StatusNotifierWatcher
--- and StatusNotifierHost D-Bus services and only the XEmbed icons are
--- displayed. The D-Bus services are started shortly after the widget is
--- created, so setting this to `false` right after creating the widget (or
--- before, using `wibox.widget.systray.set_statusnotifier_enabled(false)`)
--- prevents them from ever being started. Setting it to `false` later
--- removes the StatusNotifierItems and stops the services.
+-- This requires a D-Bus session bus, so it is disabled by default. When this
+-- is `false`, awesome does not provide the StatusNotifierWatcher and
+-- StatusNotifierHost D-Bus services and only the XEmbed icons are displayed.
+--
+-- Setting it to `true` starts the D-Bus services (shortly after the widget
+-- is created, when it is set before, using
+-- `wibox.widget.systray.set_statusnotifier_enabled(true)`). Setting it back
+-- to `false` removes the StatusNotifierItems and stops the services.
 --
 -- @property statusnotifier_enabled
--- @tparam[opt=true] boolean statusnotifier_enabled
+-- @tparam[opt=false] boolean statusnotifier_enabled
 -- @propemits true false
 
 function systray:set_statusnotifier_enabled(enabled)
@@ -780,7 +789,9 @@ local function new(revers)
 
     drawable._set_systray_widget(ret)
 
-    -- Leave some time to disable the StatusNotifierItems.
+    -- Start the StatusNotifierItem support if it was enabled before the
+    -- widget was created. This is delayed, so enabling and disabling it right
+    -- away does not start anything.
     gtimer.delayed_call(function()
         if statusnotifier_enabled then
             start_statusnotifier()
